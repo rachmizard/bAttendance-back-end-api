@@ -10,7 +10,7 @@ class Absen extends Model
     protected $primaryKey = 'id';
     public $timestamps = true;
     protected $fillable = [
-        'karyawan_id', 'verifikasi_id', 'status', 'alasan', 'created_at', 'updated_at'
+        'karyawan_id', 'verifikasi_id', 'status', 'alasan', 'work_duration', 'late_duration', 'created_at', 'updated_at'
     ];
     protected $dates = ['created_at'];
 
@@ -26,7 +26,7 @@ class Absen extends Model
     }
 
     public function verifikasi()
-    {	
+    {
     	return $this->belongsTo(Verifikasi::class, 'verifikasi_id', 'id');
     }
 

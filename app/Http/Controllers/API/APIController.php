@@ -148,7 +148,7 @@ class APIController extends Controller
             $masuk->alasan = null;
             $masuk->save();
             $title = 'Absen Notifikasi';
-            $message =  'Seseorang melakukan absen masuk hari ini '. Carbon::now()->format('d-m-Y H:i:s');
+            $message =  $masuk->karyawan->nama. ' melakukan absen masuk hari ini '. Carbon::now()->format('d-m-Y H:i:s');
             $type = 'success';
             $image = 'foto.jpg';
             event(new AbsenEvent($title, $message, $type, $image));
@@ -193,6 +193,21 @@ class APIController extends Controller
             $keluar->status = 'keluar';
             $keluar->alasan = $request->input('alasan');
             $keluar->save();
+
+            // Counting your duration work
+            $getting_your_present = Absen::where('karyawan_id', $request->input('karyawan_id'))->where('status', 'masuk')->whereDate('created_at', $validator)->first();
+            $getting_jam_tolerance = Jam::where('status', 1)->first();
+            // after you got your ABSEN ID you can access it
+            $count_your_duration_work = Absen::find($getting_your_present['id']);
+            $start = Carbon::parse($count_your_duration_work->verifikasi->updated_at);
+            $end = Carbon::parse($keluar->verifikasi->created_at);
+
+            $start_tolerance = Carbon::parse($getting_jam_tolerance['tolerance']);
+
+            $getting_your_present->work_duration = $end->diff($start)->format('%H:%I:%S');
+            $getting_your_present->late_duration = $start_tolerance->diff($start)->format('%H:%I:%S');
+
+            $getting_your_present->update();
             return response()->json(['message' => 'success', 'id' => $keluar->id]);
         }else{
             return response()->json(['message' => 'failed']);
@@ -318,8 +333,13 @@ class APIController extends Controller
 
     public function showVerifikasi($id)
     {
-        $verification = Verifikasi::findOrFail($id);
-        return response()->json(['id' => (string)$verification->id, 'pin' => $verification->pin, 'status' => $verification->status]);
+      try {
+          $verification = Verifikasi::findOrFail($id);
+          return response()->json(['id' => (string)$verification->id, 'pin' => $verification->pin, 'status' => $verification->status]);
+      } catch (\Exception $e) {
+          return response()->json(['message' => 'Not found']);
+      }
+
     }
 
     /**
@@ -390,7 +410,7 @@ class APIController extends Controller
      * @param  int  $id
      * @return \Illuminate\Http\Response
      */
-    public function show()
+    public function show(Request $request)
     {
         $getNik = Karyawan::where('nik', $request->input('nik'))->first();
         if (count($getNik) > 0) {
