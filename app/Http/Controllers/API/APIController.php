@@ -38,8 +38,11 @@ class APIController extends Controller
                 return response()->json(['response' => $response, 'karyawan' => $karyawanID ]);
             }else if($nik['status'] == 'authorized') {
                 // Get this ID
+                $updateToken = Karyawan::find($nik['id']);
+                $updateToken->update(['device_token' => $request->input('device_token')]);
                 $karyawanID = Karyawan::where('nik', $request->input('nik'))->first();
                 $response['message'] = 'success';
+                $response['token'] = $request->input('device_token');
                 return response()->json(['response' => $response, 'karyawan' => $karyawanID ]);
             }else{
                 // Get this ID
@@ -131,10 +134,6 @@ class APIController extends Controller
      */
     public function masuk(Request $request)
     {
-        $this->validate($request, [
-            'karyawan_id' => 'required',
-            'verifikasi_id' => 'required',
-        ]);
         $getDate = Carbon::now();
         // Get date now
         $validator = Carbon::today()->format('Y-m-d');
@@ -147,11 +146,6 @@ class APIController extends Controller
             $masuk->status = 'masuk';
             $masuk->alasan = null;
             $masuk->save();
-            $title = 'Absen Notifikasi';
-            $message =  $masuk->karyawan->nama. ' melakukan absen masuk hari ini '. Carbon::now()->format('d-m-Y H:i:s');
-            $type = 'success';
-            $image = 'foto.jpg';
-            event(new AbsenEvent($title, $message, $type, $image));
             return response()->json(['message' => 'success', 'id' => $masuk->id ]);
         }else{
             return response()->json(['message' => 'failed', 'text' => 'Silahkan coba lagi!']);
@@ -193,21 +187,6 @@ class APIController extends Controller
             $keluar->status = 'keluar';
             $keluar->alasan = $request->input('alasan');
             $keluar->save();
-
-            // Counting your duration work
-            $getting_your_present = Absen::where('karyawan_id', $request->input('karyawan_id'))->where('status', 'masuk')->whereDate('created_at', $validator)->first();
-            $getting_jam_tolerance = Jam::where('status', 1)->first();
-            // after you got your ABSEN ID you can access it
-            $count_your_duration_work = Absen::find($getting_your_present['id']);
-            $start = Carbon::parse($count_your_duration_work->verifikasi->updated_at);
-            $end = Carbon::parse($keluar->verifikasi->created_at);
-
-            $start_tolerance = Carbon::parse($getting_jam_tolerance['tolerance']);
-
-            $getting_your_present->work_duration = $end->diff($start)->format('%H:%I:%S');
-            $getting_your_present->late_duration = $start_tolerance->diff($start)->format('%H:%I:%S');
-
-            $getting_your_present->update();
             return response()->json(['message' => 'success', 'id' => $keluar->id]);
         }else{
             return response()->json(['message' => 'failed']);
@@ -262,17 +241,104 @@ class APIController extends Controller
         $absen = Absen::find($id);
         $absen->verifikasi_id = $request->input('verifikasi_id');
         $absen->update();
+        $token = $absen->karyawan->device_token;
+        $fcmUrl = 'https://fcm.googleapis.com/fcm/send';
+        $checkInTime = Carbon::parse($absen->verifikasi->updated_at)->timezone('Asia/Jakarta');
 
         // return response()->json(['message' => 'success', 'id' => $absen->karyawan->id]);
-        if (Carbon::parse($absen->verifikasi->updated_at)->format('H:i:s') < Carbon::parse($jam_masuk['start'])->format('H:i:s')) {
-            return response()->json(['message' => 'success', 'id' => $absen->id, 'text' => 'WOW Anda semangat sekali, dengan hadir lebih awal. Selamat bekerja :)']);
-        }else if(Carbon::parse($absen->verifikasi->updated_at)->format('H:i:s') > Carbon::parse($jam_masuk['start'])->format('H:i:s')){
-            if (Carbon::parse($absen->verifikasi->updated_at)->format('H:i:s') < Carbon::parse($jam_masuk['tolerance'])->format('H:i:s')) {
-                return response()->json(['message' => 'success', 'id' => $absen->karyawan->id, 'text' => 'Terimakasih sudah hadir tepat waktu. Selamat bekerja :)']);
+        if (Carbon::parse($checkInTime)->format('H:i:s') < Carbon::parse($jam_masuk['start'])->format('H:i:s')) {
+            $notification = [
+                'title' => 'Selamat datang '. $absen->karyawan->nama,
+                'body' => 'WOW Anda semangat sekali, dengan hadir lebih awal. Selamat bekerja 😀😬',
+                'priority' => 'high',
+                'sound' => true,
+            ];
+
+            // Trigger Push Notif
+            $extraNotificationData = ["message" => $notification,"moredata" =>'dd'];
+            $fcmNotification = [
+                // 'registration_ids' => $token, //multple token array
+                'to'        => $token, //single token
+                'notification' => $notification,
+                'data' => $extraNotificationData
+            ];
+            $headers = [
+                'Authorization: key=AIzaSyApVpA0N2kN6WpFS6vytCCTPCj4L3xBefg',
+                'Content-Type: application/json'
+            ];
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL,$fcmUrl);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($fcmNotification));
+            $result = curl_exec($ch);
+            curl_close($ch);
+            return response()->json(['message' => 'success', 'id' => $absen->id, 'text' => 'WOW Anda semangat sekali, dengan hadir lebih awal. Selamat bekerja 😀😬']);
+        }else if(Carbon::parse($checkInTime)->format('H:i:s') > Carbon::parse($jam_masuk['start'])->format('H:i:s')){
+            if (Carbon::parse($checkInTime)->format('H:i:s') < Carbon::parse($jam_masuk['tolerance'])->format('H:i:s')) {
+                $notification = [
+                    'title' => 'Selamat datang '. $absen->karyawan->nama,
+                    'body' => 'Terimakasih sudah hadir tepat waktu. Selamat bekerja 😀😬',
+                    'priority' => 'high',
+                    'sound' => true,
+                ];
+
+                // Trigger Push Notif
+                $extraNotificationData = ["message" => $notification,"moredata" =>'dd'];
+                $fcmNotification = [
+                    // 'registration_ids' => $token, //multple token array
+                    'to'        => $token, //single token
+                    'notification' => $notification,
+                    'data' => $extraNotificationData
+                ];
+                $headers = [
+                    'Authorization: key=AIzaSyApVpA0N2kN6WpFS6vytCCTPCj4L3xBefg',
+                    'Content-Type: application/json'
+                ];
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL,$fcmUrl);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($fcmNotification));
+                $result = curl_exec($ch);
+                curl_close($ch);
+                return response()->json(['message' => 'success', 'id' => $absen->karyawan->id, 'text' => 'Terimakasih sudah hadir tepat waktu. Selamat bekerja 😀😬']);
             }else{
-                return response()->json(['message' => 'request', 'id' => $absen->karyawan->id, 'text' => 'Hati-hati, malas adalah awal dari kegagalan. Segera perbaiki di hari esok,. Selamat bekerja :)']);
+                $notification = [
+                    'title' => 'Selamat datang '. $absen->karyawan->nama,
+                    'body' => 'Hati-hati, malas adalah awal dari kegagalan. Segera perbaiki di hari esok,. Selamat bekerja 😀😬',
+                    'priority' => 'high',
+                    'sound' => true,
+                ];
+                // Trigger Push Notif
+                $extraNotificationData = ["message" => $notification,"moredata" =>'dd'];
+                $fcmNotification = [
+                    // 'registration_ids' => $token, //multple token array
+                    'to'        => $token, //single token
+                    'notification' => $notification,
+                    'data' => $extraNotificationData
+                ];
+                $headers = [
+                    'Authorization: key=AIzaSyApVpA0N2kN6WpFS6vytCCTPCj4L3xBefg',
+                    'Content-Type: application/json'
+                ];
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL,$fcmUrl);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($fcmNotification));
+                $result = curl_exec($ch);
+                curl_close($ch);
+                return response()->json(['message' => 'request', 'id' => $absen->karyawan->id, 'text' => 'Hati-hati, malas adalah awal dari kegagalan. Segera perbaiki di hari esok,. Selamat bekerja 😀😬']);
             }
         }
+
     }
 
     public function deleteAbsen($id)
@@ -333,13 +399,8 @@ class APIController extends Controller
 
     public function showVerifikasi($id)
     {
-      try {
-          $verification = Verifikasi::findOrFail($id);
-          return response()->json(['id' => (string)$verification->id, 'pin' => $verification->pin, 'status' => $verification->status]);
-      } catch (\Exception $e) {
-          return response()->json(['message' => 'Not found']);
-      }
-
+        $verification = Verifikasi::findOrFail($id);
+        return response()->json(['id' => (string)$verification->id, 'pin' => $verification->pin, 'status' => $verification->status]);
     }
 
     /**
@@ -410,7 +471,7 @@ class APIController extends Controller
      * @param  int  $id
      * @return \Illuminate\Http\Response
      */
-    public function show(Request $request)
+    public function show()
     {
         $getNik = Karyawan::where('nik', $request->input('nik'))->first();
         if (count($getNik) > 0) {
@@ -425,7 +486,7 @@ class APIController extends Controller
     public function pulang()
     {
         $getStatus = Jam::where('status', 1)->first();
-        if (Carbon::parse($getStatus['end'])->format('H:i:s') > Carbon::now()->format('H:i:s') ) {
+        if (Carbon::now()->format('H:i:s') > Carbon::parse($getStatus['end'])->format('H:i:s')) {
             return response()->json(['message' => true]);
         }else{
             return response()->json(['message' => false]);
@@ -450,7 +511,7 @@ class APIController extends Controller
             return response()->json(['message' => true, 'text' => 'Ya ini hari libur boleh lembur']);
         }else{
             if (Carbon::now()->format('H:i:s') > Carbon::parse($jam['end'])->format('H:i:s')) {
-                return response()->json(['message' => true, 'text' => 'Ya kamu sudah lebih dari jam '. $jam['end'] .' boleh lembur']);
+                return response()->json(['message' => true, 'text' => 'Ya kamu sudah lebih dari jam '. $jam['end'] .' boleh lembur']);       
             }else{
                 return response()->json(['message' => false, 'text' => 'Belum boleh lembur']);
             }

@@ -23,6 +23,12 @@ $app = new Laravel\Lumen\Application(
     realpath(__DIR__.'/../')
 );
 
+$app->configure('app');
+
+$value = config('app.timezone');
+config(['app.timezone' => 'Asia/Jakarta']);
+
+
 $app->withFacades();
 
 $app->withEloquent();

@@ -9,7 +9,7 @@ class Karyawan extends Model
     protected $table = 'karyawans';
     protected $primaryKey = 'id';
     protected $fillable = [
-        'id', 'nama', 'jenis_kelamin', 'jabatan', 'divisi', 'nik', 'pin', 'status', 'fp'
+        'id', 'nama', 'jenis_kelamin', 'jabatan', 'divisi', 'nik', 'pin', 'status', 'fp', 'device_token'
     ];
 
     public function absen()
@@ -20,6 +20,11 @@ class Karyawan extends Model
     public function lembur()
     {
     	return $this->hasMany(Lembur::class, 'id');
+    }
+
+    public function rekapDurasi()
+    {
+        return $this->hasMany(RekapDurasi::class, 'id');
     }
 
 }
